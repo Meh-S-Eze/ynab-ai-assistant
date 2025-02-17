@@ -1,0 +1,78 @@
+---
+description: Guides Perplexity analysis for improving codebase stability
+globs: **/*.py", "**/requirements.txt", "**/config/*.yaml", "**/*.toml
+---
+
+name: "GitHub Model Conversion Protocol"
+version: "1.2"
+strict_mode: true
+
+conversion_rules:
+  ai_integration:
+    - pattern: "from openai import"
+      replacement: "# GitHub Model Integration\nfrom gh_models import ModelRouter"
+      validation:
+        - check: "ModelRouter" in code
+        - check: "fallback_order" configured
+        - required_files: ["./model_configs/production.yaml"]
+
+    - pattern: "client = OpenAI("
+      replacement: |
+        # Stable model initialization with circuit breaker
+        model_router = ModelRouter(
+            config_path="model_configs/production.yaml",
+            circuit_breaker={
+                "failure_threshold": 3,
+                "recovery_timeout": 300
+            }
+        )
+
+error_handling:
+  validations:
+    - name: "response_schema_check"
+      pattern: "def process_ai_response"
+      required: |
+        from pydantic import BaseModel
+
+        class AIResponseSchema(BaseModel):
+            content: str
+            confidence: float = Field(..., gt=0, lt=1)
+            error: str | None
+
+    - name: "transaction_safety"
+      pattern: "db.insert"
+      required: |
+        with atomic_transaction():
+            db.insert(...)
+
+stability_rules:
+  memory_management:
+    - context_managers_required_for:
+        - "load_llm()"
+        - "DBConnectionPool.get_connection()"
+    
+  error_recovery:
+    - pattern: "except Exception as e"
+      required: |
+        except (ModelRuntimeError, DBConnectionError) as e:
+            logging.error(f"[FALLBACK] {str(e)}")
+            model_router.reset_circuit()
+            raise ServiceDegradationError from e
+
+testing_requirements:
+  coverage:
+    min_coverage: 85%
+    required_tests:
+      - "test_model_fallback.py"
+      - "test_circuit_breaker.py"
+  
+  load_testing:
+    - scenario: "high_error_rate"
+      required_metrics:
+        - "error_rate < 5%"
+        - "latency_95p < 2s"
+
+documentation:
+  reference_files:
+    - "@../docs/ARCHITECTURE.md#ai-components"
+    - "@../.env.example#MODEL_CONFIG"
