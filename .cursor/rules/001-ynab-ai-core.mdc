@@ -1,0 +1,38 @@
+---
+description: Core architecture rules for YNAB AI assistant
+globs: *.py, *.env, requirments.txt
+---
+
+
+# YNAB AI Core Architecture Guidelines
+
+## Project Structure
+- Maintain modular architecture with separate components for:
+  - API interaction (`ynab_api/`)
+  - AI processing (`ai_processing/`)
+  - User interface (`chat_interface/`)
+- Reference @file .env for credential management
+- Keep third-party dependencies in @file requirements.txt
+
+## Code Style
+- Follow Python PEP8 standards with these additions:
+  - Use type hints for all public functions
+  - Document exceptions using Google-style docstrings
+  - Prefix internal methods with `_`
+- Example valid function:
+  def get_category_balance(category_name: str) -> float:
+  """Fetch YNAB category balance in dollars.
+  text
+  Args:
+      category_name: Exact category name from YNAB
+      
+  Returns:
+      Current available balance as float
+      
+  Raises:
+      YnabApiError: On API connection issues
+  """
+  text
+
+  @file .env
+  @file requirements.txt

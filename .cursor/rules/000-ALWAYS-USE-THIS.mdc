@@ -1,0 +1,77 @@
+---
+description: ALWAYS USE THIS RULE!!!!!!!!!!!
+globs: **/.* **/*
+---
+# Core AI Operation Protocol v1.0
+# The "No duh!" Guide to Simple Things
+
+ui:
+  react_components: false
+  websockets: false
+  custom_css: false
+  session_management: false
+  client_caching: false
+  custom_auth: false
+
+components:
+  microservices: false
+  database_layer: false
+  webhooks: false
+  background_workers: false
+  custom_components: false
+  file_operations: false
+
+integrations:
+  oauth: false
+  sso: false
+  analytics: false
+  api_endpoints: false
+  monitoring: false
+
+features:
+  visualizations: false
+  exports: false
+  notifications: false
+  mobile_specific: false
+  multilingual: false
+  preferences: false
+
+error_handling:
+  custom_tracking: false
+  retry_patterns: false
+  error_analytics: false
+  multi_level_logging: false
+  log_aggregation: false
+
+testing:
+  test_frameworks: false
+  integration_tests: false
+  load_testing: false
+  mock_data: false
+  coverage_reporting: false
+
+security:
+  rate_limiting: false
+  ip_blocking: false
+  request_validation: false
+  input_sanitization: false
+  session_tracking: false
+
+performance:
+  response_caching: false
+  query_optimization: false
+  connection_pooling: false
+  load_balancing: false
+  memory_optimization: false
+
+configuration:
+  env_configs: false
+  feature_flags: false
+  dynamic_config: false
+  config_validation: false
+  multi_stage: false
+
+validation:
+  response_schema:
+    content: true
+    confidence: true

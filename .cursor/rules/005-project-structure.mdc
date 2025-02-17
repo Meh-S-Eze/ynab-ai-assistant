@@ -1,0 +1,23 @@
+---
+description: YNAB AI project layout conventions
+globs: *
+---
+# Project Structure Rules
+
+ynab-ai-assistant/
+├── .cursor/ # IDE configurations
+├── ynab_api/ # API interactions
+│ ├── init.py
+│ ├── client.py
+│ └── schemas.py
+├── ai_processing/ # LLM integration
+│ ├── personas/
+│ └── prompts/
+├── chat_interface/ # User interaction
+├── tests/ # Test suite
+└── utils/ # Shared utilities
+text
+
+1. Maintain strict separation of concerns
+2. All new features require matching tests
+3. Document public APIs with mkdocs

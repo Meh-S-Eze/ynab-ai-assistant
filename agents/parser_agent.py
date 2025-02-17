@@ -10,22 +10,68 @@ class ParserAgent:
     def __init__(self):
         self.logger = logging.getLogger('parser_agent')
         
-    def parse_request(self, user_input: str) -> Dict:
-        """Parse user input and identify request type and details."""
-        self.logger.debug(f"Parsing request: {user_input}")
+    def parse_request(self, text: str) -> dict:
+        # Simple categorization check
+        if "categorize" in text.lower() or "category" in text.lower():
+            return self._parse_categorization(text)
         
-        # Check for categorization request
-        if self._is_categorization_request(user_input):
-            return self._parse_categorization(user_input)
+        # Simple spending check    
+        if "spent" in text.lower() or "spending" in text.lower():
+            return self._parse_spending(text)
             
-        # Check for spending query
-        if self._is_spending_query(user_input):
-            return self._parse_spending_query(user_input)
+        return {"type": "chat", "message": text}
+
+    def _parse_categorization(self, text: str) -> dict:
+        # Look for text between quotes first
+        transaction = None
+        category = None
+        
+        # Simple quote check
+        quotes = text.split('"')
+        if len(quotes) > 1:
+            transaction = quotes[1]
             
-        # Default to general chat
+        # Look for category after "as" or "to"
+        words = text.lower().split()
+        for i, word in enumerate(words):
+            if word in ["as", "to"] and i < len(words) - 1:
+                category = words[i + 1]
+                break
+
+        if not transaction or not category:
+            return {
+                "type": "error",
+                "message": "Could you rephrase that? Not sure what to categorize!"
+            }
+
         return {
-            'type': 'chat',
-            'message': user_input
+            "type": "categorize",
+            "transaction": transaction,
+            "category": category
+        }
+
+    def _parse_spending(self, text: str) -> dict:
+        # Default to "this month"
+        days = 30
+        category = None
+
+        # Super simple time period check
+        if "week" in text:
+            days = 7
+        elif "year" in text:
+            days = 365
+
+        # Look for category after "on" or "in"
+        words = text.lower().split()
+        for i, word in enumerate(words):
+            if word in ["on", "in"] and i < len(words) - 1:
+                category = words[i + 1]
+                break
+
+        return {
+            "type": "spending",
+            "category": category,
+            "days": days
         }
         
     def _is_categorization_request(self, text: str) -> bool:
@@ -40,55 +86,6 @@ class ParserAgent:
         
         text = text.lower()
         return any(re.search(pattern, text) for pattern in categorization_patterns)
-        
-    def _parse_categorization(self, text: str) -> Dict:
-        """Extract transaction and category from categorization request."""
-        # Look for quoted transaction name first
-        transaction = None
-        quoted = re.findall(r'[\'"]([^\'"]*)[\'"]', text)
-        if quoted:
-            transaction = quoted[0]
-        else:
-            # Try to find transaction between common phrases
-            patterns = [
-                r'categori[sz]e\s+([^\.]+?)\s+(?:as|to|in|under)',
-                r'transaction (?:for |of |)([^\.]+?)\s+(?:as|to|in|under)',
-                r'purchase (?:for |of |)([^\.]+?)\s+(?:as|to|in|under)',
-                r'payment (?:for |to |)([^\.]+?)\s+(?:as|to|in|under)',
-                r'charge (?:for |from |)([^\.]+?)\s+(?:as|to|in|under)'
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, text, re.IGNORECASE)
-                if match:
-                    transaction = match.group(1).strip()
-                    break
-
-        # Look for category after common phrases
-        category = None
-        category_patterns = [
-            r'(?:as|to|in|under|in the|to the|under the)\s+([^\.]+?)(?:\s+category|\s+budget|\s+group|$)',
-            r'should be\s+([^\.]+)',
-            r'mark (?:as|it as)\s+([^\.]+)'
-        ]
-        
-        for pattern in category_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                category = match.group(1).strip()
-                break
-                
-        if not transaction or not category:
-            self.logger.warning(f"Could not parse categorization request - transaction: {transaction}, category: {category}")
-            return {
-                'type': 'error',
-                'message': "I couldn't quite catch which transaction and category you meant. Could you try rephrasing that?"
-            }
-            
-        return {
-            'type': 'categorize',
-            'transaction': transaction,
-            'category': category
-        }
         
     def _is_spending_query(self, text: str) -> bool:
         """Check if this is a spending query."""

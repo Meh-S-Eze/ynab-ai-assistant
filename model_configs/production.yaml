@@ -1,9 +1,9 @@
 # Model Configuration for Production Environment
 models:
   primary:
-    name: "microsoft/phi-3-mini"
-    type: "local"
-    context_length: 4096
+    name: "facebook/opt-125m"
+    type: "github"
+    context_length: 2048
     temperature: 0.7
     max_tokens: 150
     timeout: 30
@@ -12,12 +12,22 @@ models:
       backoff_factor: 2
 
   fallback:
-    - name: "stabilityai/stablelm-3b-4e1t"
-      type: "local"
-      context_length: 2048
-      temperature: 0.5
-      max_tokens: 100
-      timeout: 15
+    - name: "gpt2"
+      type: "github"
+      context_length: 1024
+      temperature: 0.7
+      max_tokens: 150
+      timeout: 30
+      retry:
+        max_attempts: 2
+        backoff_factor: 1.5
+    
+    - name: "distilgpt2"
+      type: "github"
+      context_length: 1024
+      temperature: 0.7
+      max_tokens: 150
+      timeout: 30
       retry:
         max_attempts: 2
         backoff_factor: 1.5

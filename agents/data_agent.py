@@ -96,9 +96,18 @@ class DataOperationsAgent:
             'therapy': 'Health & Wellness'
         }
         
+        # First try exact match in mappings
         if name in category_map:
-            name = category_map[name].lower()
-            
+            search_name = category_map[name]
+            for _, row in self.budget_data.iterrows():
+                if row['Category'] == search_name:
+                    return {
+                        'id': str(row.name),
+                        'name': row['Category'],
+                        'group': row['Category Group']
+                    }
+                    
+        # Then try partial matches
         for _, row in self.budget_data.iterrows():
             category = str(row['Category']).lower()
             if name in category or category in name:
@@ -108,17 +117,6 @@ class DataOperationsAgent:
                     'group': row['Category Group']
                 }
         
-        # If we didn't find an exact match, try partial matches
-        for _, row in self.budget_data.iterrows():
-            category = str(row['Category']).lower()
-            words = set(name.split()) & set(category.split())
-            if words:
-                return {
-                    'id': str(row.name),
-                    'name': row['Category'],
-                    'group': row['Category Group']
-                }
-                
         return None
         
     def update_category(self, transaction_name: str, category_name: str) -> Dict:

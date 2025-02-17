@@ -12,7 +12,13 @@ logger = setup_logger('main_app')
 logger.info("Starting YNAB AI Assistant")
 
 # Verify required secrets
-required_secrets = ["YNAB_API_KEY", "YNAB_BUDGET_ID", "OPENAI_API_KEY"]
+required_secrets = [
+    "YNAB_API_KEY",
+    "YNAB_BUDGET_ID",
+    "GITHUB_TOKEN",  # Required for GitHub Model Registry
+    "GITHUB_MODEL",
+    "GITHUB_FALLBACK_MODEL"
+]
 missing_secrets = [secret for secret in required_secrets if secret not in st.secrets]
 if missing_secrets:
     error_msg = f"Missing required secrets: {', '.join(missing_secrets)}"
@@ -115,9 +121,7 @@ try:
     logger.debug(f"Set YNAB client budget ID to: {ynab_client.budget_id}")
     
     logger.info("Initializing chat handler")
-    chat_handler = ChatHandler(
-        openai_client=st.secrets["OPENAI_API_KEY"]
-    )
+    chat_handler = ChatHandler()  # No need to pass OpenAI key anymore
     chat_handler.switch_persona(st.session_state.current_persona)
     logger.info("Clients initialized successfully")
     

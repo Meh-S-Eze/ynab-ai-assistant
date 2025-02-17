@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import time
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
+import os
 
 class ModelRuntimeError(Exception):
     """Raised when model execution fails"""
@@ -61,6 +62,22 @@ class CircuitBreaker:
             
         return False
 
+class MockModel:
+    """Mock model for testing"""
+    def __init__(self, name: str, config: Dict):
+        self.name = name
+        self.config = config
+        
+    def generate(self, prompt: str) -> str:
+        """Generate mock response"""
+        # Simple mock responses for testing
+        if "categorize" in prompt.lower():
+            return "I've updated the category for you!"
+        elif "what category" in prompt.lower():
+            return "This transaction is in the Medical category."
+        else:
+            return "I understand your request and I'm here to help!"
+
 class ModelWrapper:
     """Wraps a model with resource management"""
     def __init__(self, name: str, config: Dict):
@@ -73,31 +90,45 @@ class ModelWrapper:
     def load(self):
         """Context manager for model loading and cleanup"""
         try:
-            if not self.model:
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.name,
-                    torch_dtype=torch.float16,
-                    device_map="auto"
-                )
-                self.tokenizer = AutoTokenizer.from_pretrained(self.name)
+            if self.config["type"] == "mock":
+                self.model = MockModel(self.name, self.config)
+            elif self.config["type"] == "github":
+                # Use GitHub Model Registry with proper authentication
+                if not self.model:
+                    self.tokenizer = AutoTokenizer.from_pretrained(
+                        self.name,
+                        trust_remote_code=True,
+                        token=os.getenv("GITHUB_TOKEN")
+                    )
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.name,
+                        trust_remote_code=True,
+                        device_map="auto",
+                        token=os.getenv("GITHUB_TOKEN")
+                    )
             yield self
         finally:
             # Resource cleanup happens on context exit
-            torch.cuda.empty_cache()
+            if self.config["type"] != "mock":
+                torch.cuda.empty_cache()
             
     def generate(self, prompt: str) -> str:
         """Generate response from the model"""
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=self.config["max_tokens"],
-                temperature=self.config["temperature"],
-                pad_token_id=self.tokenizer.eos_token_id
-            )
+        if self.config["type"] == "mock":
+            return self.model.generate(prompt)
             
-        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        if self.config["type"] == "github":
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=self.config["max_tokens"],
+                    temperature=self.config["temperature"],
+                    pad_token_id=self.tokenizer.eos_token_id
+                )
+                
+            return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 class ModelRouter:
     """Routes requests to appropriate models with fallback"""

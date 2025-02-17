@@ -6,30 +6,46 @@ from utils.logger import setup_logger
 import json
 
 class YNABClient:
-    def __init__(self, api_key: str, budget_id: Optional[str] = None):
-        self.logger = setup_logger('ynab_client')
-        self.logger.info("Initializing YNAB client")
-        
+    def __init__(self, api_key: str):
         if not api_key:
-            self.logger.error("No API key provided")
-            raise ValueError("YNAB API key is required")
+            print("Oops! Need an API key!")
+            raise ValueError("Need API key")
             
         self.api_key = api_key
-        self.budget_id = budget_id
         self.base_url = "https://api.ynab.com/v1"
-        
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        })
+
+    def get_transactions(self, budget_id: str) -> list:
         try:
-            self.session = requests.Session()
-            self.session.headers.update({
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            })
-            # Test the connection
-            self._test_connection()
-            self.logger.debug("YNAB client initialized successfully")
+            response = self.session.get(f"{self.base_url}/budgets/{budget_id}/transactions")
+            response.raise_for_status()
+            return response.json().get('data', {}).get('transactions', [])
         except Exception as e:
-            self.logger.error(f"Failed to initialize YNAB client: {str(e)}")
-            raise
+            print(f"Couldn't get transactions: {e}")
+            return []
+
+    def update_transaction(self, budget_id: str, transaction_id: str, 
+                         category_id: str = None, memo: str = None):
+        try:
+            data = {"transaction": {}}
+            if category_id:
+                data["transaction"]["category_id"] = category_id
+            if memo:
+                data["transaction"]["memo"] = memo
+
+            response = self.session.put(
+                f"{self.base_url}/budgets/{budget_id}/transactions/{transaction_id}",
+                json=data
+            )
+            response.raise_for_status()
+            return response.json().get('data', {}).get('transaction')
+        except Exception as e:
+            print(f"Couldn't update transaction: {e}")
+            return None
 
     def _test_connection(self):
         """Test the API connection"""
@@ -133,11 +149,33 @@ class YNABClient:
             self.logger.error(f"Failed to fetch transactions: {str(e)}")
             raise
 
+    class TransactionContext:
+        """Context manager for atomic YNAB operations"""
+        def __init__(self, client, budget_id: str):
+            self.client = client
+            self.budget_id = budget_id
+            self.original_state = None
+            self.transaction_id = None
+            
+        def __enter__(self):
+            return self
+            
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if exc_type is not None and self.original_state and self.transaction_id:
+                # Rollback on error
+                try:
+                    self.client.session.put(
+                        f"{self.client.base_url}/budgets/{self.budget_id}/transactions/{self.transaction_id}",
+                        json={"transaction": self.original_state}
+                    )
+                except Exception as e:
+                    self.client.logger.error(f"Failed to rollback transaction: {str(e)}")
+
     def update_transaction(self, budget_id: Optional[str] = None,
-                         transaction_id: str = None,
-                         category_id: Optional[str] = None,
-                         memo: Optional[str] = None) -> Dict:
-        """Update a transaction"""
+                          transaction_id: str = None,
+                          category_id: Optional[str] = None,
+                          memo: Optional[str] = None) -> Dict:
+        """Update a transaction atomically"""
         budget_id = budget_id or self.budget_id
         if not budget_id:
             self.logger.error("Budget ID is required but not provided")
@@ -149,30 +187,45 @@ class YNABClient:
             
         self.logger.info(f"Updating transaction {transaction_id} in budget: {budget_id}")
         
-        # Build update data
-        update_data = {"transaction": {}}
-        if category_id is not None:
-            update_data["transaction"]["category_id"] = category_id
-        if memo is not None:
-            update_data["transaction"]["memo"] = memo
-            
-        try:
-            response = self.session.put(
-                f"{self.base_url}/budgets/{budget_id}/transactions/{transaction_id}",
-                json=update_data
-            )
-            response.raise_for_status()
-            data = response.json().get('data', {})
-            if 'transaction' not in data:
-                self.logger.error(f"No transaction in response: {json.dumps(data, indent=2)}")
-                raise ValueError("Unexpected API response format")
+        with self.TransactionContext(self, budget_id) as tx:
+            try:
+                # Get current state
+                response = self.session.get(
+                    f"{self.base_url}/budgets/{budget_id}/transactions/{transaction_id}"
+                )
+                response.raise_for_status()
+                current_state = response.json().get('data', {}).get('transaction', {})
                 
-            updated_transaction = data['transaction']
-            self.logger.debug(f"Successfully updated transaction: {transaction_id}")
-            return updated_transaction
-        except Exception as e:
-            self.logger.error(f"Failed to update transaction: {str(e)}")
-            raise
+                # Store original state for potential rollback
+                tx.original_state = current_state
+                tx.transaction_id = transaction_id
+                
+                # Build update data
+                update_data = {"transaction": current_state.copy()}
+                if category_id is not None:
+                    update_data["transaction"]["category_id"] = category_id
+                if memo is not None:
+                    update_data["transaction"]["memo"] = memo
+                    
+                # Perform update
+                response = self.session.put(
+                    f"{self.base_url}/budgets/{budget_id}/transactions/{transaction_id}",
+                    json=update_data
+                )
+                response.raise_for_status()
+                data = response.json().get('data', {})
+                
+                if 'transaction' not in data:
+                    self.logger.error(f"No transaction in response: {json.dumps(data, indent=2)}")
+                    raise ValueError("Unexpected API response format")
+                    
+                updated_transaction = data['transaction']
+                self.logger.debug(f"Successfully updated transaction: {transaction_id}")
+                return updated_transaction
+                
+            except Exception as e:
+                self.logger.error(f"Failed to update transaction: {str(e)}")
+                raise
             
     def find_category_by_name(self, name: str, budget_id: Optional[str] = None) -> Optional[Dict]:
         """Find a category by name (case-insensitive partial match)"""

@@ -1,0 +1,90 @@
+---
+description: 
+globs: 
+---
+# YNAB AI Assistant Garage Rules
+version: 1.0
+project:
+  name: ynab-ai-garage
+  motto: "Keep it simple, keep it fun!"
+
+essentials:
+  files:
+    - .streamlit/secrets.toml
+    - requirements.txt
+    - app.py
+  directories:
+    - ynab_api/
+    - ai_chat/
+    - config/
+
+api_rules:
+  ynab:
+    token_source: secrets.toml
+    endpoints:
+      required: ["/budgets", "/categories"]
+    conversions:
+      milliunits: "divide_by_1000"
+    limits:
+      requests: 200/hour
+      cache_ttl: 300s
+
+  openai:
+    model: "gpt-3.5-turbo"
+    personas:
+      cheerleader:
+        temp: 0.7
+        prompt: "Respond like an excited coach with emojis"
+      roaster:
+        temp: 1.0  
+        prompt: "Roast spending habits playfully"
+
+ui_rules:
+  streamlit:
+    required:
+      - chat_input
+      - chat_message
+      - session_state
+    messages:
+      history_size: 10
+      errors: "inline_red"
+    performance:
+      cache: true
+      rerun_interval: 60s
+
+personas:
+  config_file: config/personas.yaml
+  required:
+    - name
+    - prompt
+    - examples: 3
+
+safety:
+  never:
+    - commit_secrets
+    - log_tokens
+  always:
+    - encrypt_prod_secrets
+    - rate_limit_apis
+
+quickstart: |
+  # Get started in 3 steps!
+  1. cp secrets.example.toml .streamlit/secrets.toml
+  2. pip install -r requirements.txt
+  3. streamlit run app.py
+
+fun_requirements:
+  must_have:
+    - "At least 1 emoji per message"
+    - "Playful error messages"
+    - "Surprise budget memes"
+  nice_to_have:
+    - "Voice input"
+    - "Budget achievement badges"
+    - "Financial trivia mini-game"
+
+garage_philosophy:
+  - "If it works for 1 user, it's good enough"
+  - "No over-engineering allowed"
+  - "Celebrate small wins 🎉"
+  - "Have fun or why bother?" 

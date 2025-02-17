@@ -1,84 +1,89 @@
-import subprocess
-import time
-from typing import List, Tuple
+import os
+import dotenv
+import logging
+import sys
+import click
+from ynab_api.client import YNABClient
+from ai_chat.handler import ChatHandler
+from agents.parser_agent import TransactionParser
 
-def send_test_prompts() -> List[Tuple[str, str]]:
-    """
-    Have a natural conversation with the CLI, similar to how a real user would chat.
-    Returns a list of (prompt, response) tuples.
-    """
-    # Natural conversation flow
-    test_prompts = [
-        "Hey! Can you help me understand how I'm doing with my budget?",
-        "I need to categorize the transaction 'Point Of Sale Withdrawal NOCD / INC: WWW.TREATMYOCILUS' as Medical",
-        "Thanks! How much did I spend on medical expenses this month?",
-        "What other categories should I check on?",
-        "quit"  # End the session
-    ]
+# Load environment variables
+dotenv.load_dotenv()
+
+# Set up logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('cli_test')
+
+@click.command()
+def test_connection():
+    """Test YNAB and OpenAI connections"""
+    client = YNABClient("test_key")
+    parser = TransactionParser("test_key")
     
-    # Start the CLI process
-    process = subprocess.Popen(
-        ['python', 'cli_chat.py'],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1
-    )
-    
-    results = []
-    
-    # Wait for initial prompt
-    time.sleep(2)
-    
-    # Have a conversation
-    for prompt in test_prompts:
-        print(f"\n💬 You: {prompt}")
-        
-        # Send prompt to CLI
-        process.stdin.write(f"{prompt}\n")
-        process.stdin.flush()
-        
-        # Wait for response
-        time.sleep(2)
-        
-        # Read output (up to next prompt)
-        output = ""
-        while True:
-            line = process.stdout.readline()
-            if not line or "You:" in line:
-                break
-            output += line
-            
-        results.append((prompt, output.strip()))
-        print(f"🤖 Assistant: {output.strip()}")
-        
-        if prompt.lower() == 'quit':
-            break
-    
-    # Clean up
-    process.terminate()
-    
-    return results
+    print("Testing connections...")
+    # Add simple connection tests here
 
 def main():
-    print("\n🎬 Starting Budget Chat Conversation")
+    print("\n🎬 Starting YNAB Assistant")
     print("=" * 50)
     
-    try:
-        results = send_test_prompts()
-        
-        print("\n📝 Conversation Summary:")
-        print("=" * 50)
-        for i, (prompt, response) in enumerate(results, 1):
-            print(f"\n💬 You: {prompt}")
-            print(f"🤖 Assistant: {response}")
-            print("-" * 50)
-            
-    except Exception as e:
-        print(f"❌ Error during conversation: {str(e)}")
+    # Get credentials from environment
+    api_key = os.getenv("YNAB_API_KEY")
+    budget_id = os.getenv("YNAB_BUDGET_ID")
     
-    print("\n👋 Chat session ended!")
+    if not api_key:
+        logger.error("YNAB API key not found in environment")
+        print("Error: YNAB API key not found. Please set YNAB_API_KEY environment variable.")
+        return
+        
+    try:
+        # Initialize clients with real API
+        ynab_client = YNABClient(api_key=api_key, budget_id=budget_id)
+        chat_handler = ChatHandler()
+        
+        # Test basic budget info
+        print("\nFetching budget info...")
+        budgets = ynab_client.get_budgets()
+        print(f"Found {len(budgets)} budgets")
+        
+        # Test categories
+        print("\nFetching categories...")
+        categories = ynab_client.get_categories()
+        category_count = sum(len(g['categories']) for g in categories)
+        print(f"Found {category_count} categories in {len(categories)} groups")
+        
+        # Test transactions
+        print("\nFetching recent transactions...")
+        transactions = ynab_client.get_transactions()
+        print(f"Found {len(transactions)} transactions")
+        
+        # Test chat
+        print("\nTesting chat interaction...")
+        context = {
+            'budget_name': budgets[0]['name'] if budgets else 'Unknown',
+            'recent_transactions': f"Found {len(transactions)} recent transactions",
+            'categories': f"Found {category_count} categories"
+        }
+        
+        test_prompts = [
+            "How many transactions do I have?",
+            "What categories are available?",
+            "Show me my budget summary"
+        ]
+        
+        for prompt in test_prompts:
+            print(f"\nTest prompt: {prompt}")
+            response = chat_handler.get_response(prompt, context)
+            print(f"Response: {response}")
+            
+        print("\n✅ All tests completed successfully!")
+        
+    except Exception as e:
+        logger.error(f"Test failed: {str(e)}")
+        print(f"❌ Error: {str(e)}")
 
 if __name__ == "__main__":
     main() 

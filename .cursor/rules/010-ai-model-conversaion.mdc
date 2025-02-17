@@ -2,30 +2,36 @@
 description: Guides Perplexity analysis for improving codebase stability
 globs: **/*.py", "**/requirements.txt", "**/config/*.yaml", "**/*.toml
 ---
-
 name: "GitHub Model Conversion Protocol"
 version: "1.2"
 strict_mode: true
 
+core_principles:
+  testing:
+    mock_testing: false
+    requirements:
+      - use_live_apis: true
+      - use_production_credentials: true
+      - real_time_data: true
+      - direct_api_calls: true
+    
+  cli_integration:
+    mirror_ui: true
+    rules:
+      - use_identical_code_paths: true
+      - use_same_api_endpoints: true
+      - use_same_model_config: true
+      - no_test_mode: true
+      - no_mock_data: true
+
 conversion_rules:
   ai_integration:
     - pattern: "from openai import"
-      replacement: "# GitHub Model Integration\nfrom gh_models import ModelRouter"
+      replacement: "from transformers import AutoModelForCausalLM, AutoTokenizer"
       validation:
-        - check: "ModelRouter" in code
-        - check: "fallback_order" configured
+        - check: "AutoModelForCausalLM" in code
+        - check: "AutoTokenizer" in code
         - required_files: ["./model_configs/production.yaml"]
-
-    - pattern: "client = OpenAI("
-      replacement: |
-        # Stable model initialization with circuit breaker
-        model_router = ModelRouter(
-            config_path="model_configs/production.yaml",
-            circuit_breaker={
-                "failure_threshold": 3,
-                "recovery_timeout": 300
-            }
-        )
 
 error_handling:
   validations:
@@ -33,46 +39,38 @@ error_handling:
       pattern: "def process_ai_response"
       required: |
         from pydantic import BaseModel
-
+        
         class AIResponseSchema(BaseModel):
             content: str
-            confidence: float = Field(..., gt=0, lt=1)
-            error: str | None
-
-    - name: "transaction_safety"
-      pattern: "db.insert"
-      required: |
-        with atomic_transaction():
-            db.insert(...)
+            confidence: float
+            error: Optional[str]
 
 stability_rules:
   memory_management:
-    - context_managers_required_for:
-        - "load_llm()"
-        - "DBConnectionPool.get_connection()"
+    - context_managers_required: true
+    - cleanup_required: true
     
   error_recovery:
     - pattern: "except Exception as e"
       required: |
-        except (ModelRuntimeError, DBConnectionError) as e:
-            logging.error(f"[FALLBACK] {str(e)}")
-            model_router.reset_circuit()
+        except (ModelRuntimeError, ConnectionError) as e:
+            logging.error(f"[CRITICAL] {str(e)}")
             raise ServiceDegradationError from e
 
-testing_requirements:
-  coverage:
-    min_coverage: 85%
-    required_tests:
-      - "test_model_fallback.py"
-      - "test_circuit_breaker.py"
-  
-  load_testing:
-    - scenario: "high_error_rate"
-      required_metrics:
-        - "error_rate < 5%"
-        - "latency_95p < 2s"
+monitoring:
+  metrics:
+    - error_rate
+    - latency_p95
+    - memory_usage
+    - token_usage
+  alerts:
+    error_rate_threshold: 0.05
+    latency_threshold: 2000
+    memory_threshold: 0.9
 
 documentation:
-  reference_files:
-    - "@../docs/ARCHITECTURE.md#ai-components"
-    - "@../.env.example#MODEL_CONFIG"
+  required_sections:
+    - "API Integration"
+    - "Model Configuration"
+    - "Error Handling"
+    - "Performance Monitoring"
