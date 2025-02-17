@@ -5,4 +5,10 @@ requests==2.31.0
 pyyaml==6.0.1
 python-dateutil==2.8.2
 pytz==2024.1
-emoji==2.8.0 
+emoji==2.8.0
+pydantic==2.6.1
+torch==2.1.2
+transformers==4.37.2
+accelerate==0.26.1
+bitsandbytes==0.42.0
+safetensors==0.4.2 

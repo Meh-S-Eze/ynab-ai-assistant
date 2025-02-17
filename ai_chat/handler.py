@@ -1,24 +1,25 @@
 import os
 import yaml
 from typing import Dict, List, Optional
-import openai
 import emoji
 from utils.logger import setup_logger
+from .model_router import ModelRouter, ServiceDegradationError, ModelRuntimeError
 
 class ChatHandler:
-    def __init__(self, openai_client: str, personas_file: str = "config/personas.yaml"):
+    def __init__(self, personas_file: str = "config/personas.yaml"):
         self.logger = setup_logger('chat_handler')
         self.logger.info("Initializing ChatHandler")
         
         try:
-            # Set OpenAI API key
-            openai.api_key = openai_client
-            self.logger.debug("OpenAI API key set")
-            
+            # Load personas config
             with open(personas_file, 'r') as f:
                 config = yaml.safe_load(f)
             self.personas = config['personas']
             self.logger.debug(f"Loaded {len(self.personas)} personas from config")
+            
+            # Initialize model router
+            self.model_router = ModelRouter("model_configs/production.yaml")
+            self.logger.info("Initialized model router")
             
             self.current_persona = "cheerleader"  # default persona
             self.logger.info("ChatHandler initialized successfully")
@@ -43,34 +44,37 @@ class ChatHandler:
             persona = self.personas[self.current_persona]
             self.logger.debug(f"Using persona: {persona['name']}")
             
-            # Build the message list
-            messages = [
-                {"role": "system", "content": persona['prompt']},
-            ]
+            # Build the prompt
+            prompt = self._build_prompt(persona, user_message, context)
             
-            # Add context if provided
-            if context:
-                context_msg = self._format_context(context)
-                messages.append({"role": "system", "content": context_msg})
-                self.logger.debug("Added context to messages")
-            
-            # Add user message
-            messages.append({"role": "user", "content": user_message})
-            
-            self.logger.debug("Making API call to OpenAI")
-            # Get completion from OpenAI
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                temperature=persona['temperature'],
-                max_tokens=150
-            )
-            
-            self.logger.debug("Successfully got response from OpenAI")
-            return response.choices[0].message.content
+            try:
+                # Get response from model router
+                response = self.model_router.query(prompt)
+                self.logger.debug("Successfully got response from model")
+                return self.ensure_emoji(response.content)
+            except ServiceDegradationError:
+                self.logger.warning("Service degraded, using fallback response")
+                return self._get_fallback_response()
+            except ModelRuntimeError as e:
+                self.logger.error(f"Model error: {str(e)}")
+                return "I'm having trouble thinking right now. Could you try again in a moment? 😅"
+                
         except Exception as e:
             self.logger.error(f"Failed to get AI response: {str(e)}")
             raise
+
+    def _build_prompt(self, persona: Dict, message: str, context: Optional[Dict] = None) -> str:
+        """Build a prompt for the model"""
+        parts = [
+            f"You are a {persona['name']}. {persona['prompt']}",
+        ]
+        
+        if context:
+            context_msg = self._format_context(context)
+            parts.append(f"\nContext:\n{context_msg}")
+        
+        parts.append(f"\nUser: {message}\nAssistant:")
+        return "\n".join(parts)
 
     def _format_context(self, context: Dict) -> str:
         """Format context data for the AI"""
@@ -106,6 +110,15 @@ class ChatHandler:
         formatted = "\n".join(context_parts)
         self.logger.debug(f"Formatted context: {formatted}")
         return formatted
+
+    def _get_fallback_response(self) -> str:
+        """Get a fallback response when the model service is degraded"""
+        fallbacks = [
+            "I'm a bit overwhelmed right now, but I'm still here to help! Could you try that again? 😊",
+            "Things are a bit busy, but I want to help. Mind repeating that? 🌟",
+            "I need a quick moment to catch up. Could you ask that again? 💭"
+        ]
+        return fallbacks[0]  # Always use the first one for consistency
 
     def ensure_emoji(self, response: str) -> str:
         """Ensure response has at least one emoji"""

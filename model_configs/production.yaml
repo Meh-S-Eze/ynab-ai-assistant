@@ -1,44 +1,62 @@
+# Model Configuration for Production Environment
 models:
   primary:
-    provider: github
-    model: claude-3-sonnet-20240229
+    name: "microsoft/phi-3-mini"
+    type: "local"
+    context_length: 4096
     temperature: 0.7
-    max_tokens: 4000
-    timeout_seconds: 30
+    max_tokens: 150
+    timeout: 30
+    retry:
+      max_attempts: 3
+      backoff_factor: 2
 
   fallback:
-    - provider: github
-      model: gpt-4
-      temperature: 0.7
-      max_tokens: 2000
-      timeout_seconds: 20
-    
-    - provider: github
-      model: gpt-3.5-turbo
-      temperature: 0.7
-      max_tokens: 1000
-      timeout_seconds: 10
+    - name: "stabilityai/stablelm-3b-4e1t"
+      type: "local"
+      context_length: 2048
+      temperature: 0.5
+      max_tokens: 100
+      timeout: 15
+      retry:
+        max_attempts: 2
+        backoff_factor: 1.5
 
 circuit_breaker:
   failure_threshold: 3
-  recovery_timeout: 300  # 5 minutes
+  recovery_timeout: 300
   error_types:
     - ModelRuntimeError
     - TokenLimitError
     - TimeoutError
 
-response_validation:
-  required_fields:
-    - content
-    - confidence
-    - error
-  confidence_threshold: 0.7
-  max_retries: 2
+validation:
+  response_schema:
+    required:
+      - content
+      - confidence
+      - error
+    types:
+      content: str
+      confidence: float
+      error: "str | None"
+    constraints:
+      confidence:
+        min: 0.0
+        max: 1.0
 
-logging:
-  level: INFO
-  handlers:
-    - type: file
-      filename: logs/model_operations.log
-    - type: console
-      level: WARNING 
+memory_management:
+  max_batch_size: 50
+  cleanup_interval: 300
+  context_ttl: 3600
+
+monitoring:
+  metrics:
+    - error_rate
+    - latency_p95
+    - memory_usage
+    - token_usage
+  alerts:
+    error_rate_threshold: 0.05
+    latency_threshold: 2000
+    memory_threshold: 0.9 

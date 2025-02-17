@@ -1,177 +1,170 @@
 from typing import Dict, Optional, List
 import yaml
 import logging
-import os
 from pydantic import BaseModel, Field
 from contextlib import contextmanager
 import time
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
 
 class ModelRuntimeError(Exception):
     """Raised when model execution fails"""
     pass
 
 class TokenLimitError(Exception):
-    """Raised when token limit is exceeded"""
+    """Raised when input exceeds token limit"""
     pass
 
 class TimeoutError(Exception):
-    """Raised when model request times out"""
+    """Raised when model execution times out"""
     pass
 
 class ServiceDegradationError(Exception):
-    """Raised when service is degraded and needs attention"""
+    """Raised when service quality is degraded"""
     pass
 
 class AIResponseSchema(BaseModel):
-    """Schema for validating AI responses"""
+    """Schema for validated AI responses"""
     content: str
     confidence: float = Field(..., gt=0, lt=1)
     error: Optional[str] = None
 
 class CircuitBreaker:
+    """Implements circuit breaker pattern for model calls"""
     def __init__(self, failure_threshold: int, recovery_timeout: int):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.failures = 0
-        self.last_failure_time = None
-        self.is_open = False
-        self.logger = logging.getLogger('circuit_breaker')
-
+        self.last_failure_time = 0
+        self.state = "closed"
+        
     def record_failure(self):
         """Record a failure and potentially open the circuit"""
         self.failures += 1
-        self.last_failure_time = datetime.now()
-        
         if self.failures >= self.failure_threshold:
-            self.is_open = True
-            self.logger.warning(f"Circuit breaker opened after {self.failures} failures")
-
+            self.state = "open"
+            self.last_failure_time = time.time()
+            
+    def record_success(self):
+        """Record a success and reset failure count"""
+        self.failures = 0
+        self.state = "closed"
+        
     def can_execute(self) -> bool:
-        """Check if operation can be executed"""
-        if not self.is_open:
+        """Check if execution is allowed"""
+        if self.state == "closed":
             return True
-
-        if self.last_failure_time and \
-           datetime.now() - self.last_failure_time > timedelta(seconds=self.recovery_timeout):
-            self.reset()
+            
+        if time.time() - self.last_failure_time >= self.recovery_timeout:
+            self.state = "half-open"
             return True
-
+            
         return False
 
-    def reset(self):
-        """Reset the circuit breaker state"""
-        self.failures = 0
-        self.last_failure_time = None
-        self.is_open = False
-        self.logger.info("Circuit breaker reset")
+class ModelWrapper:
+    """Wraps a model with resource management"""
+    def __init__(self, name: str, config: Dict):
+        self.name = name
+        self.config = config
+        self.model = None
+        self.tokenizer = None
+        
+    @contextmanager
+    def load(self):
+        """Context manager for model loading and cleanup"""
+        try:
+            if not self.model:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    self.name,
+                    torch_dtype=torch.float16,
+                    device_map="auto"
+                )
+                self.tokenizer = AutoTokenizer.from_pretrained(self.name)
+            yield self
+        finally:
+            # Resource cleanup happens on context exit
+            torch.cuda.empty_cache()
+            
+    def generate(self, prompt: str) -> str:
+        """Generate response from the model"""
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.config["max_tokens"],
+                temperature=self.config["temperature"],
+                pad_token_id=self.tokenizer.eos_token_id
+            )
+            
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 class ModelRouter:
-    """Routes requests to appropriate AI models with fallback handling"""
-    
+    """Routes requests to appropriate models with fallback"""
     def __init__(self, config_path: str):
         self.logger = logging.getLogger('model_router')
         
-        # Get GitHub token
-        self.github_token = os.getenv('GITHUB_TOKEN')
-        if not self.github_token:
-            raise ValueError("GITHUB_TOKEN environment variable is required")
+        # Load config
+        with open(config_path, 'r') as f:
+            self.config = yaml.safe_load(f)
             
-        self.config = self._load_config(config_path)
-        
-        # Initialize circuit breaker
-        cb_config = self.config['circuit_breaker']
-        self.circuit_breaker = CircuitBreaker(
-            failure_threshold=cb_config['failure_threshold'],
-            recovery_timeout=cb_config['recovery_timeout']
+        # Initialize models
+        self.primary = ModelWrapper(
+            self.config["models"]["primary"]["name"],
+            self.config["models"]["primary"]
         )
         
-        # Set up model clients
-        self.primary_model = self._setup_model(self.config['models']['primary'])
-        self.fallback_models = [
-            self._setup_model(model_config) 
-            for model_config in self.config['models']['fallback']
+        self.fallbacks = [
+            ModelWrapper(m["name"], m)
+            for m in self.config["models"]["fallback"]
         ]
-
-    def _load_config(self, config_path: str) -> Dict:
-        """Load model configuration from YAML"""
-        try:
-            with open(config_path, 'r') as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            self.logger.error(f"Failed to load config: {str(e)}")
-            raise
-
-    def _setup_model(self, model_config: Dict):
-        """Set up a model client based on configuration"""
-        # Add GitHub token to config
-        model_config['auth'] = {
-            'token': self.github_token,
-            'type': 'github'
-        }
-        return model_config
-
-    @contextmanager
-    def _model_context(self):
-        """Context manager for model operations with circuit breaker"""
-        if not self.circuit_breaker.can_execute():
-            raise ServiceDegradationError("Circuit breaker is open")
         
-        try:
-            yield
-        except Exception as e:
-            self.circuit_breaker.record_failure()
-            raise
-
-    def get_completion(self, prompt: str, **kwargs) -> AIResponseSchema:
-        """Get completion from model with fallback handling"""
-        with self._model_context():
-            # Try primary model first
-            try:
-                response = self._try_model(self.primary_model, prompt, **kwargs)
-                self.circuit_breaker.reset()  # Success, reset circuit breaker
-                return response
-            except Exception as e:
-                self.logger.warning(f"Primary model failed: {str(e)}")
-                
-                # Try fallback models in order
-                for fallback_model in self.fallback_models:
-                    try:
-                        response = self._try_model(fallback_model, prompt, **kwargs)
-                        self.logger.info(f"Fallback succeeded with model: {fallback_model['model']}")
-                        return response
-                    except Exception as fallback_e:
-                        self.logger.warning(f"Fallback model failed: {str(fallback_e)}")
-                        continue
-                
-                # All models failed
-                raise ServiceDegradationError("All models failed to provide completion")
-
-    def _try_model(self, model_config: Dict, prompt: str, **kwargs) -> AIResponseSchema:
-        """Try to get completion from a specific model"""
-        # Here we'd implement the actual model call
-        # For now, we'll just simulate it
-        try:
-            # Simulate model call
-            time.sleep(0.1)  # Simulate processing
+        # Initialize circuit breaker
+        self.circuit = CircuitBreaker(
+            self.config["circuit_breaker"]["failure_threshold"],
+            self.config["circuit_breaker"]["recovery_timeout"]
+        )
+        
+    def query(self, prompt: str, retries: int = 3) -> AIResponseSchema:
+        """Query models with fallback and validation"""
+        if not self.circuit.can_execute():
+            raise ServiceDegradationError("Service temporarily degraded")
             
-            # Validate response
-            response = AIResponseSchema(
-                content="Simulated response",
-                confidence=0.95,
+        errors = []
+        
+        # Try primary model
+        try:
+            with self.primary.load() as model:
+                response = model.generate(prompt)
+                self.circuit.record_success()
+                return self._validate_response(response)
+        except Exception as e:
+            self.logger.error(f"Primary model failed: {str(e)}")
+            self.circuit.record_failure()
+            errors.append(f"Primary - {str(e)}")
+            
+        # Try fallbacks
+        for fallback in self.fallbacks:
+            try:
+                with fallback.load() as model:
+                    response = model.generate(prompt)
+                    self.circuit.record_success()
+                    return self._validate_response(response)
+            except Exception as e:
+                self.logger.error(f"Fallback {fallback.name} failed: {str(e)}")
+                errors.append(f"Fallback {fallback.name} - {str(e)}")
+                
+        raise ModelRuntimeError(f"All models failed: {'; '.join(errors)}")
+        
+    def _validate_response(self, response: str) -> AIResponseSchema:
+        """Validate model response against schema"""
+        try:
+            # TODO: Implement proper response parsing
+            return AIResponseSchema(
+                content=response,
+                confidence=0.8,  # TODO: Implement proper confidence scoring
                 error=None
             )
-            
-            return response
-            
         except Exception as e:
-            self.logger.error(f"Model error: {str(e)}")
-            raise ModelRuntimeError(f"Failed to get completion: {str(e)}")
-
-    def reset_circuit(self):
-        """Reset the circuit breaker"""
-        self.circuit_breaker.reset() 
+            self.logger.error(f"Response validation failed: {str(e)}")
+            raise 
